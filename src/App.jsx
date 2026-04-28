@@ -29,7 +29,6 @@ function App() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [changingName, setChangingName] = useState(false);
   
-  // Система очков и таймеров
   const [points, setPoints] = useState(0);
   const [level, setLevel] = useState(1);
   const [nextPointTimer, setNextPointTimer] = useState(null);
@@ -44,7 +43,10 @@ function App() {
   const [isViewingOther, setIsViewingOther] = useState(false);
   const [viewingUserProgress, setViewingUserProgress] = useState(null);
 
-  // Функция для получения времени до полуночи по Москве
+  // Получение текущей даты
+  const today = new Date();
+  const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
   const getTimeUntilMidnightMSK = () => {
     const now = new Date();
     const mskTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
@@ -53,7 +55,6 @@ function App() {
     return midnight - mskTime;
   };
 
-  // Форматирование времени
   const formatTime = (ms) => {
     if (ms <= 0) return '00:00:00';
     const hours = Math.floor(ms / (1000 * 60 * 60));
@@ -62,28 +63,23 @@ function App() {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Проверка, можно ли получить очко сегодня
   const canGetPoint = () => {
     if (!lastRatedDate) return true;
     const last = new Date(lastRatedDate);
     const now = new Date();
     const lastMSK = new Date(last.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
     const nowMSK = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
-    
     return lastMSK.getDate() !== nowMSK.getDate() ||
            lastMSK.getMonth() !== nowMSK.getMonth() ||
            lastMSK.getFullYear() !== nowMSK.getFullYear();
   };
 
-  // Проверка и потеря очков при пропуске дня
   const checkAndLosePoints = () => {
     if (!lastRatedDate) return false;
-    
     const last = new Date(lastRatedDate);
     const now = new Date();
     const lastMSK = new Date(last.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
     const nowMSK = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
-    
     const daysPassed = Math.floor((nowMSK - lastMSK) / (1000 * 60 * 60 * 24));
     
     if (daysPassed === 1 && !canGetPoint() && !lossAlertShown) {
@@ -96,8 +92,7 @@ function App() {
       alert(`⚠️ Вы пропустили день! -5 очков. Уровень: ${newLevel}`);
       setTimeout(() => setLossAlertShown(false), 60000);
       return true;
-    }
-    else if (daysPassed >= 2 && !lossAlertShown) {
+    } else if (daysPassed >= 2 && !lossAlertShown) {
       setPoints(0);
       setLevel(1);
       setLastRatedDate(null);
@@ -110,21 +105,15 @@ function App() {
     return false;
   };
 
-  // Сохранение прогресса на сервер
   const saveProgressToServer = async (newPoints, newLevel, newLastRatedDate) => {
     if (!token) return;
     try {
-      await API.post('/user/progress', {
-        points: newPoints,
-        level: newLevel,
-        last_rated_date: newLastRatedDate
-      });
+      await API.post('/user/progress', { points: newPoints, level: newLevel, last_rated_date: newLastRatedDate });
     } catch (error) {
       console.error('Save progress error:', error);
     }
   };
 
-  // Загрузка прогресса с сервера
   const loadProgressFromServer = async () => {
     if (!token) return;
     try {
@@ -139,26 +128,21 @@ function App() {
     }
   };
 
-  // Обновление таймеров
   const updateTimers = () => {
     const timeToMidnight = getTimeUntilMidnightMSK();
     setNextPointTimer(timeToMidnight);
   };
 
-  // Эффект для таймеров и проверки потери очков
   useEffect(() => {
     if (!token || isViewingOther || !progressLoaded) return;
-    
     updateTimers();
     const interval = setInterval(() => {
       updateTimers();
       checkAndLosePoints();
     }, 1000);
-    
     return () => clearInterval(interval);
   }, [token, lastRatedDate, points, isViewingOther, progressLoaded]);
 
-  // Восстановление сессии и загрузка прогресса
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
@@ -183,18 +167,28 @@ function App() {
     }
   }, [token, currentYear, currentMonth, viewingUser, isViewingOther, progressLoaded]);
 
-  // ИСПРАВЛЕНА функция fetchRatings
+  // ИСПРАВЛЕНА функция fetchRatings с отладкой
   const fetchRatings = async () => {
     if (!token) return;
     try {
       const monthNum = currentMonth + 1;
       const monthStr = monthNum.toString().padStart(2, '0');
-      const res = await API.get(`/ratings/month/${currentYear}/${monthStr}`);
+      const url = `/ratings/month/${currentYear}/${monthStr}`;
+      console.log('Fetching ratings from:', url);
+      
+      const res = await API.get(url);
+      console.log('Ratings response:', res.data);
+      
       const data = {};
-      res.data.forEach(r => { data[r.date] = r.rating; });
+      res.data.forEach(r => { 
+        data[r.date] = r.rating; 
+        console.log(`Rating for ${r.date}: ${r.rating}`);
+      });
       setRatings(data);
+      console.log('Final ratings object:', data);
     } catch (error) {
       console.error('fetchRatings error:', error);
+      console.error('Error response:', error.response);
     }
   };
 
@@ -202,13 +196,13 @@ function App() {
     if (!token) return;
     try {
       const res = await API.get('/ratings/stats');
+      console.log('Stats response:', res.data);
       setStats({ avgRating: res.data.avgRating || 0, totalDays: res.data.totalDays || 0 });
     } catch (error) {
       console.error('fetchStats error:', error);
     }
   };
 
-  // ИСПРАВЛЕНА функция fetchUserRatings
   const fetchUserRatings = async () => {
     if (!viewingUser) return;
     try {
@@ -243,7 +237,6 @@ function App() {
     }
   };
 
-  // ПОИСК ПОЛЬЗОВАТЕЛЕЙ - только при вводе минимум 2 символов
   const searchUsers = async (query) => {
     if (query.length < 2) {
       setUsers([]);
@@ -261,15 +254,16 @@ function App() {
   const saveRating = async (date, rating) => {
     if (!token || isViewingOther) return;
     try {
+      console.log('Saving rating:', { date, rating });
       await API.post('/ratings/rate', { date, rating });
-      fetchRatings();
-      fetchStats();
+      console.log('Rating saved, fetching updates...');
+      await fetchRatings();
+      await fetchStats();
       
       if (canGetPoint()) {
         const newPoints = points + 1;
         const newLevel = Math.floor(newPoints / 30) + 1;
         const nowISO = new Date().toISOString();
-        
         setPoints(newPoints);
         setLevel(newLevel);
         setLastRatedDate(nowISO);
@@ -280,6 +274,7 @@ function App() {
       setSliderValue(3);
     } catch (error) {
       console.error('saveRating error:', error);
+      alert('Ошибка при сохранении оценки');
     }
   };
 
@@ -437,16 +432,21 @@ function App() {
     const date = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const rating = ratings[date];
     const fillHeight = rating ? (rating / 5) * 100 : 0;
+    const isToday = date === todayDateStr;
     
     days.push(
       <div key={day} style={styles.dayCell}>
         <button 
-          style={styles.dayButton} 
+          style={{ 
+            ...styles.dayButton, 
+            ...(isToday ? styles.dayButtonToday : {}),
+            ...(rating !== undefined ? styles.dayButtonRated : {})
+          }} 
           onClick={() => !isViewingOther && setSelectedDate({ date, rating: rating || 0 })}
           disabled={isViewingOther}
         >
           <div style={{ ...styles.fillBar, height: `${fillHeight}%` }}></div>
-          <span style={styles.dayNumber}>{day}</span>
+          <span style={{ ...styles.dayNumber, ...(isToday ? styles.dayNumberToday : {}) }}>{day}</span>
           {rating !== undefined && <span style={styles.dayRating}>{rating}</span>}
         </button>
       </div>
@@ -481,7 +481,6 @@ function App() {
         </div>
       </div>
 
-      {/* Блок очков и таймеров */}
       <div style={styles.pointsCard}>
         <div style={styles.pointsHeader}>
           <div style={styles.pointsLevel}>
@@ -528,7 +527,6 @@ function App() {
         </button>
       </div>
 
-      {/* Список пользователей - показываем только при поиске */}
       {showUserList && (
         <div style={styles.modalOverlay} onClick={() => setShowUserList(false)}>
           <div style={styles.userListModal} onClick={e => e.stopPropagation()}>
@@ -607,7 +605,6 @@ function App() {
 
         {view === 'stats' && (
           <div style={styles.statsPage}>
-            {/* Профиль с уровнем */}
             <div style={styles.statsProfile}>
               <div style={styles.statsAvatar}>{user?.avatar || '◆'}</div>
               <div style={styles.statsUserName}>{isViewingOther ? viewingUser?.username : user?.username}</div>
@@ -682,7 +679,6 @@ function App() {
         )}
       </div>
 
-      {/* Модальное окно со слайдером */}
       {selectedDate && !isViewingOther && (
         <div style={styles.modalOverlay} onClick={() => setSelectedDate(null)}>
           <div style={styles.sliderModalContent} onClick={e => e.stopPropagation()}>
@@ -840,9 +836,27 @@ const styles = {
   weekday: { textAlign: 'center', fontSize: '10px', fontWeight: 600, color: '#555' },
   calendarGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(40px, 1fr))', gap: '4px' },
   dayCell: { aspectRatio: '1' },
-  dayButton: { position: 'relative', width: '100%', height: '100%', background: '#0d0d0d', border: '1px solid #1a1a1a', cursor: 'pointer', overflow: 'hidden', borderRadius: '6px', transition: 'all 0.2s' },
+  dayButton: { 
+    position: 'relative', 
+    width: '100%', 
+    height: '100%', 
+    background: '#0d0d0d', 
+    border: '1px solid #1a1a1a', 
+    cursor: 'pointer', 
+    overflow: 'hidden', 
+    borderRadius: '8px', 
+    transition: 'all 0.2s' 
+  },
+  dayButtonToday: {
+    border: '2px solid #22c55e',
+    background: '#1a2a1a',
+  },
+  dayButtonRated: {
+    border: '1px solid #22c55e',
+  },
   fillBar: { position: 'absolute', bottom: 0, left: 0, width: '100%', background: '#22c55e', opacity: 0.25, transition: 'height 0.3s ease' },
   dayNumber: { position: 'absolute', top: '4px', left: '6px', fontSize: '11px', fontWeight: 500, zIndex: 1, color: '#c0c0c0' },
+  dayNumberToday: { color: '#22c55e', fontWeight: 'bold' },
   dayRating: { position: 'absolute', bottom: '2px', right: '4px', fontSize: '9px', fontWeight: 600, color: '#22c55e', zIndex: 1 },
   
   statsPage: { maxWidth: '500px', margin: '0 auto' },
