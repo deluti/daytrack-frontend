@@ -167,7 +167,7 @@ function App() {
     }
   }, [token, currentYear, currentMonth, viewingUser, isViewingOther, progressLoaded]);
 
-  // ИСПРАВЛЕНА функция fetchRatings с отладкой
+  // ИСПРАВЛЕННАЯ функция fetchRatings
   const fetchRatings = async () => {
     if (!token) return;
     try {
@@ -177,15 +177,18 @@ function App() {
       console.log('Fetching ratings from:', url);
       
       const res = await API.get(url);
-      console.log('Ratings response:', res.data);
+      console.log('Raw response:', res.data);
       
       const data = {};
-      res.data.forEach(r => { 
-        data[r.date] = r.rating; 
-        console.log(`Rating for ${r.date}: ${r.rating}`);
+      res.data.forEach(item => { 
+        // Убеждаемся что дата в правильном формате
+        const dateStr = item.date;
+        console.log(`Processing: ${dateStr} -> rating: ${item.rating}`);
+        data[dateStr] = item.rating;
       });
+      
+      console.log('Final ratings data:', data);
       setRatings(data);
-      console.log('Final ratings object:', data);
     } catch (error) {
       console.error('fetchRatings error:', error);
       console.error('Error response:', error.response);
@@ -251,15 +254,24 @@ function App() {
     }
   };
 
+  // ИСПРАВЛЕННАЯ функция saveRating
   const saveRating = async (date, rating) => {
     if (!token || isViewingOther) return;
     try {
-      console.log('Saving rating:', { date, rating });
-      await API.post('/ratings/rate', { date, rating });
-      console.log('Rating saved, fetching updates...');
-      await fetchRatings();
+      console.log('Saving rating for date:', date, 'rating:', rating);
+      
+      // Убеждаемся что дата в правильном формате YYYY-MM-DD
+      const formattedDate = date;
+      const response = await API.post('/ratings/rate', { date: formattedDate, rating });
+      console.log('Save response:', response.data);
+      
+      // Обновляем локальное состояние сразу
+      setRatings(prev => ({ ...prev, [formattedDate]: rating }));
+      
+      // Обновляем статистику
       await fetchStats();
       
+      // Обновляем очки
       if (canGetPoint()) {
         const newPoints = points + 1;
         const newLevel = Math.floor(newPoints / 30) + 1;
@@ -272,9 +284,13 @@ function App() {
       
       setSelectedDate(null);
       setSliderValue(3);
+      
+      // Принудительно обновляем календарь
+      await fetchRatings();
     } catch (error) {
       console.error('saveRating error:', error);
-      alert('Ошибка при сохранении оценки');
+      console.error('Error response:', error.response);
+      alert(`Ошибка при сохранении оценки: ${error.response?.data?.error || error.message}`);
     }
   };
 
