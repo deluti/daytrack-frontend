@@ -13,12 +13,15 @@ const API = axios.create({
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState('calendar');
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [ratings, setRatings] = useState({});
+  const [notes, setNotes] = useState({});
   const [selectedDate, setSelectedDate] = useState(null);
   const [sliderValue, setSliderValue] = useState(3);
+  const [noteText, setNoteText] = useState('');
   const [stats, setStats] = useState({ avgRating: 0, totalDays: 0 });
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
@@ -28,6 +31,12 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [changingName, setChangingName] = useState(false);
+  const [premiumCode, setPremiumCode] = useState('');
+  const [activatingPremium, setActivatingPremium] = useState(false);
+  const [availableAvatars, setAvailableAvatars] = useState(['😊', '😎', '🔥', '⭐', '🎯', '💪', '🏆', '🎨', '🚀', '🌟', '💎', '👑']);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [adminCodes, setAdminCodes] = useState([]);
+  const [generatingCodes, setGeneratingCodes] = useState(false);
   
   const [points, setPoints] = useState(0);
   const [level, setLevel] = useState(1);
@@ -42,8 +51,9 @@ function App() {
   const [showUserList, setShowUserList] = useState(false);
   const [isViewingOther, setIsViewingOther] = useState(false);
   const [viewingUserProgress, setViewingUserProgress] = useState(null);
+  const [viewingUserIsFavorite, setViewingUserIsFavorite] = useState(false);
+  const [favorites, setFavorites] = useState([]);
 
-  // Получение текущей даты
   const today = new Date();
   const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
@@ -143,6 +153,16 @@ function App() {
     return () => clearInterval(interval);
   }, [token, lastRatedDate, points, isViewingOther, progressLoaded]);
 
+  const checkAdmin = async () => {
+    if (!token) return;
+    try {
+      const res = await API.get('/admin/check');
+      setIsAdmin(res.data.isAdmin);
+    } catch (error) {
+      console.error('Check admin error:', error);
+    }
+  };
+
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
@@ -151,6 +171,7 @@ function App() {
       setUser(JSON.parse(savedUser));
       API.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
       loadProgressFromServer();
+      checkAdmin();
     } else {
       setProgressLoaded(true);
     }
@@ -160,38 +181,31 @@ function App() {
     if (token && !isViewingOther && progressLoaded) {
       fetchRatings();
       fetchStats();
+      fetchFavorites();
     } else if (token && viewingUser) {
       fetchUserRatings();
       fetchUserStats();
       fetchUserProgress();
+      checkIsFavorite();
     }
   }, [token, currentYear, currentMonth, viewingUser, isViewingOther, progressLoaded]);
 
-  // ИСПРАВЛЕННАЯ функция fetchRatings
   const fetchRatings = async () => {
     if (!token) return;
     try {
       const monthNum = currentMonth + 1;
       const monthStr = monthNum.toString().padStart(2, '0');
-      const url = `/ratings/month/${currentYear}/${monthStr}`;
-      console.log('Fetching ratings from:', url);
-      
-      const res = await API.get(url);
-      console.log('Raw response:', res.data);
-      
+      const res = await API.get(`/ratings/month/${currentYear}/${monthStr}`);
       const data = {};
-      res.data.forEach(item => { 
-        // Убеждаемся что дата в правильном формате
-        const dateStr = item.date;
-        console.log(`Processing: ${dateStr} -> rating: ${item.rating}`);
-        data[dateStr] = item.rating;
+      const notesData = {};
+      res.data.forEach(item => {
+        data[item.date] = item.rating;
+        if (item.note) notesData[item.date] = item.note;
       });
-      
-      console.log('Final ratings data:', data);
       setRatings(data);
+      setNotes(notesData);
     } catch (error) {
       console.error('fetchRatings error:', error);
-      console.error('Error response:', error.response);
     }
   };
 
@@ -199,7 +213,6 @@ function App() {
     if (!token) return;
     try {
       const res = await API.get('/ratings/stats');
-      console.log('Stats response:', res.data);
       setStats({ avgRating: res.data.avgRating || 0, totalDays: res.data.totalDays || 0 });
     } catch (error) {
       console.error('fetchStats error:', error);
@@ -213,8 +226,13 @@ function App() {
       const monthStr = monthNum.toString().padStart(2, '0');
       const res = await API.get(`/users/${viewingUser.id}/ratings/${currentYear}/${monthStr}`);
       const data = {};
-      res.data.forEach(r => { data[r.date] = r.rating; });
+      const notesData = {};
+      res.data.forEach(item => {
+        data[item.date] = item.rating;
+        if (item.note) notesData[item.date] = item.note;
+      });
       setRatings(data);
+      setNotes(notesData);
     } catch (error) {
       console.error('fetchUserRatings error:', error);
     }
@@ -225,6 +243,7 @@ function App() {
     try {
       const res = await API.get(`/users/${viewingUser.id}/profile`);
       setStats({ avgRating: res.data.stats.avgRating || 0, totalDays: res.data.stats.totalDays || 0 });
+      setViewingUserIsFavorite(res.data.isFavorite || false);
     } catch (error) {
       console.error('fetchUserStats error:', error);
     }
@@ -240,38 +259,100 @@ function App() {
     }
   };
 
-  const searchUsers = async (query) => {
-    if (query.length < 2) {
-      setUsers([]);
-      return;
+  const fetchFavorites = async () => {
+    try {
+      const res = await API.get('/favorites');
+      setFavorites(res.data);
+    } catch (error) {
+      console.error('fetchFavorites error:', error);
     }
+  };
+
+  const checkIsFavorite = async () => {
+    if (!viewingUser) return;
+    try {
+      const res = await API.get(`/favorites/check/${viewingUser.id}`);
+      setViewingUserIsFavorite(res.data.isFavorite);
+    } catch (error) {
+      console.error('checkIsFavorite error:', error);
+    }
+  };
+
+  const toggleFavorite = async () => {
+    if (!viewingUser) return;
+    try {
+      if (viewingUserIsFavorite) {
+        await API.post('/favorites/remove', { favoriteId: viewingUser.id });
+      } else {
+        await API.post('/favorites/add', { favoriteId: viewingUser.id });
+      }
+      setViewingUserIsFavorite(!viewingUserIsFavorite);
+      fetchFavorites();
+    } catch (error) {
+      console.error('toggleFavorite error:', error);
+    }
+  };
+
+  const searchUsers = async (query) => {
+    if (!token) return;
     try {
       const res = await API.get(`/users/search?q=${encodeURIComponent(query)}`);
       setUsers(res.data);
     } catch (error) {
       console.error('searchUsers error:', error);
-      setUsers([]);
     }
   };
 
-  // ИСПРАВЛЕННАЯ функция saveRating
+  const activatePremium = async () => {
+    if (!premiumCode.trim()) {
+      alert('Введите код премиум');
+      return;
+    }
+    setActivatingPremium(true);
+    try {
+      await API.post('/premium/activate', { code: premiumCode });
+      alert('Премиум успешно активирован!');
+      setPremiumCode('');
+      setUser(prev => ({ ...prev, is_premium: true }));
+    } catch (error) {
+      alert(error.response?.data?.error || 'Ошибка активации');
+    } finally {
+      setActivatingPremium(false);
+    }
+  };
+
+  const updateAvatar = async (avatar) => {
+    try {
+      await API.put('/user/avatar', { avatar });
+      setUser(prev => ({ ...prev, avatar }));
+      setShowAvatarPicker(false);
+    } catch (error) {
+      console.error('Update avatar error:', error);
+    }
+  };
+
+  const generatePremiumCodes = async () => {
+    setGeneratingCodes(true);
+    try {
+      const res = await API.post('/admin/generate-codes', { count: 5 });
+      setAdminCodes(res.data.codes);
+      alert('Коды сгенерированы!');
+    } catch (error) {
+      alert('Ошибка генерации');
+    } finally {
+      setGeneratingCodes(false);
+    }
+  };
+
   const saveRating = async (date, rating) => {
     if (!token || isViewingOther) return;
     try {
-      console.log('Saving rating for date:', date, 'rating:', rating);
+      await API.post('/ratings/rate', { date, rating, note: noteText });
+      setRatings(prev => ({ ...prev, [date]: rating }));
+      if (noteText) setNotes(prev => ({ ...prev, [date]: noteText }));
       
-      // Убеждаемся что дата в правильном формате YYYY-MM-DD
-      const formattedDate = date;
-      const response = await API.post('/ratings/rate', { date: formattedDate, rating });
-      console.log('Save response:', response.data);
-      
-      // Обновляем локальное состояние сразу
-      setRatings(prev => ({ ...prev, [formattedDate]: rating }));
-      
-      // Обновляем статистику
       await fetchStats();
       
-      // Обновляем очки
       if (canGetPoint()) {
         const newPoints = points + 1;
         const newLevel = Math.floor(newPoints / 30) + 1;
@@ -284,12 +365,10 @@ function App() {
       
       setSelectedDate(null);
       setSliderValue(3);
-      
-      // Принудительно обновляем календарь
+      setNoteText('');
       await fetchRatings();
     } catch (error) {
       console.error('saveRating error:', error);
-      console.error('Error response:', error.response);
       alert(`Ошибка при сохранении оценки: ${error.response?.data?.error || error.message}`);
     }
   };
@@ -305,6 +384,7 @@ function App() {
       setUser(res.data.user);
       API.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
       await loadProgressFromServer();
+      await checkAdmin();
       setUsername('');
       setPassword('');
     } catch (error) {
@@ -367,7 +447,6 @@ function App() {
     setIsViewingOther(true);
     setShowUserList(false);
     setSearchQuery('');
-    setUsers([]);
     setView('calendar');
   };
 
@@ -447,6 +526,7 @@ function App() {
   for (let day = 1; day <= daysInMonth; day++) {
     const date = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const rating = ratings[date];
+    const note = notes[date];
     const fillHeight = rating ? (rating / 5) * 100 : 0;
     const isToday = date === todayDateStr;
     
@@ -458,7 +538,7 @@ function App() {
             ...(isToday ? styles.dayButtonToday : {}),
             ...(rating !== undefined ? styles.dayButtonRated : {})
           }} 
-          onClick={() => !isViewingOther && setSelectedDate({ date, rating: rating || 0 })}
+          onClick={() => !isViewingOther && setSelectedDate({ date, rating: rating || 0, note: note || '' })}
           disabled={isViewingOther}
         >
           <div style={{ ...styles.fillBar, height: `${fillHeight}%` }}></div>
@@ -491,11 +571,37 @@ function App() {
         <div style={styles.headerLeft}>
           <span style={styles.logo}>◆</span>
           <span style={styles.logoText}>DayTrack</span>
+          {user?.is_premium && <span style={styles.premiumBadge}>👑 PREMIUM</span>}
         </div>
         <div style={styles.userInfo}>
-          <span style={styles.userName}>{user?.username}</span>
+          <button style={styles.avatarBtn} onClick={() => setShowAvatarPicker(true)}>
+            <span style={styles.avatarEmoji}>{user?.avatar || '😊'}</span>
+          </button>
+          <span style={{ ...styles.userName, ...(user?.is_premium ? styles.premiumName : {}) }}>{user?.username}</span>
         </div>
       </div>
+
+      {showAvatarPicker && (
+        <div style={styles.modalOverlay} onClick={() => setShowAvatarPicker(false)}>
+          <div style={styles.avatarPickerModal} onClick={e => e.stopPropagation()}>
+            <div style={styles.userListHeader}>
+              <h3 style={styles.userListTitle}>Выберите смайлик</h3>
+              <button style={styles.closeBtn} onClick={() => setShowAvatarPicker(false)}>✕</button>
+            </div>
+            <div style={styles.avatarGrid}>
+              {availableAvatars.map(emoji => (
+                <button
+                  key={emoji}
+                  style={{ ...styles.avatarOption, ...(user?.avatar === emoji ? styles.avatarOptionSelected : {}) }}
+                  onClick={() => updateAvatar(emoji)}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={styles.pointsCard}>
         <div style={styles.pointsHeader}>
@@ -553,7 +659,7 @@ function App() {
             <input
               type="text"
               style={styles.searchInput}
-              placeholder="Введите имя для поиска (минимум 2 символа)..."
+              placeholder="Введите имя для поиска..."
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
@@ -561,13 +667,30 @@ function App() {
               }}
             />
             <div style={styles.userListItems}>
-              {searchQuery.length >= 2 ? (
-                users.length > 0 ? (
-                  users.map(u => (
+              {users.map(u => (
+                <button key={u.id} style={styles.userListItem} onClick={() => handleViewUser(u)}>
+                  <span style={styles.userListAvatar}>{u.avatar || '◆'}</span>
+                  <div style={styles.userListInfo}>
+                    <span style={{ ...styles.userListNameWhite, ...(u.is_premium ? styles.premiumName : {}) }}>{u.username}</span>
+                    <div style={styles.userListLevelBadge}>
+                      <span style={styles.userListLevelIcon}>🏆</span>
+                      <span style={styles.userListLevelText}>Уровень {u.level || 1}</span>
+                      <span style={styles.userListPointsText}>({u.points || 0} очков)</span>
+                      {u.is_favorite && <span style={styles.favoriteStar}>⭐</span>}
+                    </div>
+                  </div>
+                  <span style={styles.userListArrow}>→</span>
+                </button>
+              ))}
+              {users.length === 0 && searchQuery && <div style={styles.noUsers}>Пользователи не найдены</div>}
+              {users.length === 0 && !searchQuery && favorites.length > 0 && (
+                <div style={styles.favoritesList}>
+                  <div style={styles.favoritesTitle}>⭐ Избранные</div>
+                  {favorites.map(u => (
                     <button key={u.id} style={styles.userListItem} onClick={() => handleViewUser(u)}>
                       <span style={styles.userListAvatar}>{u.avatar || '◆'}</span>
                       <div style={styles.userListInfo}>
-                        <span style={styles.userListNameWhite}>{u.username}</span>
+                        <span style={{ ...styles.userListNameWhite, ...(u.is_premium ? styles.premiumName : {}) }}>{u.username}</span>
                         <div style={styles.userListLevelBadge}>
                           <span style={styles.userListLevelIcon}>🏆</span>
                           <span style={styles.userListLevelText}>Уровень {u.level || 1}</span>
@@ -576,12 +699,8 @@ function App() {
                       </div>
                       <span style={styles.userListArrow}>→</span>
                     </button>
-                  ))
-                ) : (
-                  <div style={styles.noUsers}>Пользователи не найдены</div>
-                )
-              ) : (
-                <div style={styles.noUsers}>Введите минимум 2 символа для поиска</div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -611,8 +730,13 @@ function App() {
               
               {isViewingOther && (
                 <div style={styles.viewingNotice}>
-                  Просмотр пользователя {viewingUser?.username}
-                  <button style={styles.backToMyBtn} onClick={handleBackToMyProfile}>Вернуться</button>
+                  <span>Просмотр пользователя <span style={viewingUser?.is_premium ? styles.premiumName : {}}>{viewingUser?.username}</span></span>
+                  <div style={styles.viewingButtons}>
+                    <button style={styles.favoriteBtn} onClick={toggleFavorite}>
+                      {viewingUserIsFavorite ? '⭐ Удалить из избранного' : '☆ Добавить в избранное'}
+                    </button>
+                    <button style={styles.backToMyBtn} onClick={handleBackToMyProfile}>Вернуться</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -623,7 +747,7 @@ function App() {
           <div style={styles.statsPage}>
             <div style={styles.statsProfile}>
               <div style={styles.statsAvatar}>{user?.avatar || '◆'}</div>
-              <div style={styles.statsUserName}>{isViewingOther ? viewingUser?.username : user?.username}</div>
+              <div style={{ ...styles.statsUserName, ...(user?.is_premium ? styles.premiumName : {}) }}>{isViewingOther ? viewingUser?.username : user?.username}</div>
               
               <div style={styles.statsLevelContainer}>
                 <div style={styles.statsLevelHeader}>
@@ -643,6 +767,38 @@ function App() {
                 <button style={styles.changeUsernameBtn} onClick={() => setShowChangeUsername(true)}>
                   Изменить имя
                 </button>
+              )}
+              
+              {!isViewingOther && !user?.is_premium && (
+                <div style={styles.premiumSection}>
+                  <div style={styles.premiumTitle}>✨ DayTrack Premium</div>
+                  <input
+                    type="text"
+                    style={styles.premiumInput}
+                    placeholder="XXXX-XXXX-XXXX-XXXX"
+                    value={premiumCode}
+                    onChange={(e) => setPremiumCode(e.target.value.toUpperCase())}
+                  />
+                  <button style={styles.premiumBtn} onClick={activatePremium} disabled={activatingPremium}>
+                    {activatingPremium ? 'Активация...' : 'Активировать премиум'}
+                  </button>
+                </div>
+              )}
+              
+              {isAdmin && !isViewingOther && (
+                <div style={styles.adminSection}>
+                  <div style={styles.adminTitle}>👑 Админ панель</div>
+                  <button style={styles.adminBtn} onClick={generatePremiumCodes} disabled={generatingCodes}>
+                    {generatingCodes ? 'Генерация...' : 'Сгенерировать 5 премиум кодов'}
+                  </button>
+                  {adminCodes.length > 0 && (
+                    <div style={styles.codesList}>
+                      {adminCodes.map((code, i) => (
+                        <div key={i} style={styles.codeItem}>{code}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             
@@ -695,6 +851,7 @@ function App() {
         )}
       </div>
 
+      {/* Модальное окно для оценки с заметкой */}
       {selectedDate && !isViewingOther && (
         <div style={styles.modalOverlay} onClick={() => setSelectedDate(null)}>
           <div style={styles.sliderModalContent} onClick={e => e.stopPropagation()}>
@@ -718,6 +875,22 @@ function App() {
                 <span>0.5</span><span>1</span><span>1.5</span><span>2</span><span>2.5</span>
                 <span>3</span><span>3.5</span><span>4</span><span>4.5</span><span>5</span>
               </div>
+            </div>
+            
+            <div style={styles.noteContainer}>
+              <textarea
+                style={styles.noteInput}
+                placeholder="Заметка к этому дню (видна всем)..."
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                rows={3}
+              />
+              {selectedDate.note && !noteText && (
+                <div style={styles.existingNote}>
+                  <span style={styles.existingNoteLabel}>📝 Существующая заметка:</span>
+                  <span style={styles.existingNoteText}>{selectedDate.note}</span>
+                </div>
+              )}
             </div>
             
             <div style={styles.sliderButtons}>
@@ -761,8 +934,23 @@ const styles = {
   headerLeft: { display: 'flex', alignItems: 'center', gap: '10px' },
   logo: { fontSize: '24px', color: '#22c55e' },
   logoText: { fontSize: '18px', fontWeight: 600, color: '#e0e0e0' },
-  userInfo: { display: 'flex', alignItems: 'center' },
+  premiumBadge: { fontSize: '10px', background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', color: '#000', padding: '2px 8px', borderRadius: '20px', fontWeight: 'bold' },
+  userInfo: { display: 'flex', alignItems: 'center', gap: '12px' },
+  avatarBtn: { background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 },
+  avatarEmoji: { fontSize: '28px' },
   userName: { fontSize: '14px', color: '#22c55e', background: '#1a2a1a', padding: '6px 12px', borderRadius: '20px' },
+  premiumName: { 
+    background: 'linear-gradient(135deg, #fbbf24, #f59e0b, #f97316)',
+    color: '#000',
+    fontWeight: 'bold',
+    textShadow: '0 0 10px rgba(251,191,36,0.5)',
+    animation: 'pulse 2s infinite'
+  },
+  
+  avatarPickerModal: { background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '16px', width: '90%', maxWidth: '400px', padding: '16px' },
+  avatarGrid: { display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px', marginTop: '16px' },
+  avatarOption: { fontSize: '32px', background: 'transparent', border: '1px solid #1a1a1a', borderRadius: '12px', cursor: 'pointer', padding: '8px', transition: 'all 0.2s' },
+  avatarOptionSelected: { border: '2px solid #22c55e', transform: 'scale(1.05)' },
   
   pointsCard: {
     margin: '12px 16px',
@@ -900,6 +1088,23 @@ const styles = {
   infoText: { fontSize: '11px', color: '#555' },
   infoTextSmall: { fontSize: '10px', color: '#444', marginTop: '4px' },
   
+  premiumSection: { marginTop: '16px', padding: '12px', background: '#1a1a1a', borderRadius: '8px' },
+  premiumTitle: { fontSize: '14px', fontWeight: 'bold', color: '#fbbf24', marginBottom: '8px' },
+  premiumInput: { width: '100%', padding: '10px', background: '#0a0a0a', border: '1px solid #2a2a2a', borderRadius: '8px', color: '#e0e0e0', fontSize: '12px', textAlign: 'center', letterSpacing: '1px' },
+  premiumBtn: { width: '100%', padding: '10px', marginTop: '8px', background: '#fbbf24', color: '#000', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' },
+  
+  adminSection: { marginTop: '16px', padding: '12px', background: '#1a1a1a', borderRadius: '8px', borderLeft: '3px solid #ef4444' },
+  adminTitle: { fontSize: '14px', fontWeight: 'bold', color: '#ef4444', marginBottom: '8px' },
+  adminBtn: { width: '100%', padding: '10px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer' },
+  codesList: { marginTop: '12px', maxHeight: '150px', overflowY: 'auto' },
+  codeItem: { background: '#0a0a0a', padding: '6px', marginBottom: '4px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', color: '#22c55e' },
+  
+  noteContainer: { marginBottom: '16px' },
+  noteInput: { width: '100%', padding: '10px', background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '8px', color: '#e0e0e0', fontSize: '12px', fontFamily: 'inherit', resize: 'vertical' },
+  existingNote: { marginTop: '8px', padding: '8px', background: '#1a1a1a', borderRadius: '8px' },
+  existingNoteLabel: { fontSize: '10px', color: '#888', display: 'block', marginBottom: '4px' },
+  existingNoteText: { fontSize: '11px', color: '#aaa', wordBreak: 'break-word' },
+  
   userListModal: { background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '16px', width: '90%', maxWidth: '400px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   userListHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderBottom: '1px solid #1a1a1a' },
   userListTitle: { fontSize: '16px', fontWeight: 600, margin: 0, color: '#e0e0e0' },
@@ -914,10 +1119,15 @@ const styles = {
   userListLevelIcon: { fontSize: '10px' },
   userListLevelText: { fontSize: '10px', color: '#22c55e' },
   userListPointsText: { fontSize: '9px', color: '#666' },
+  favoriteStar: { fontSize: '10px', color: '#fbbf24' },
   userListArrow: { color: '#22c55e', fontSize: '16px' },
   noUsers: { textAlign: 'center', color: '#666', padding: '32px' },
+  favoritesList: { marginTop: '16px' },
+  favoritesTitle: { fontSize: '12px', color: '#fbbf24', marginBottom: '8px', fontWeight: 'bold' },
   
-  viewingNotice: { marginTop: '16px', textAlign: 'center', fontSize: '12px', color: '#22c55e', padding: '10px', background: '#1a2a1a', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  viewingNotice: { marginTop: '16px', textAlign: 'center', fontSize: '12px', color: '#22c55e', padding: '10px', background: '#1a2a1a', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' },
+  viewingButtons: { display: 'flex', gap: '8px' },
+  favoriteBtn: { background: '#2a2a2a', border: 'none', color: '#fbbf24', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' },
   backToMyBtn: { background: '#22c55e', border: 'none', color: '#0a0a0a', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' },
   
   authPage: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a', padding: '20px' },
@@ -931,7 +1141,7 @@ const styles = {
   
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalContent: { background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '320px', textAlign: 'center' },
-  sliderModalContent: { background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '340px', textAlign: 'center' },
+  sliderModalContent: { background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '360px', textAlign: 'center' },
   modalTitle: { fontSize: '18px', fontWeight: 600, marginBottom: '16px' },
   modalText: { fontSize: '14px', color: '#888', marginBottom: '20px' },
   modalButtons: { display: 'flex', gap: '12px', marginTop: '20px' },
