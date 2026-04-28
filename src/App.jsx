@@ -183,10 +183,13 @@ function App() {
     }
   }, [token, currentYear, currentMonth, viewingUser, isViewingOther, progressLoaded]);
 
+  // ИСПРАВЛЕНА функция fetchRatings
   const fetchRatings = async () => {
     if (!token) return;
     try {
-      const res = await API.get(`/ratings/month/${currentYear}/${currentMonth + 1}`);
+      const monthNum = currentMonth + 1;
+      const monthStr = monthNum.toString().padStart(2, '0');
+      const res = await API.get(`/ratings/month/${currentYear}/${monthStr}`);
       const data = {};
       res.data.forEach(r => { data[r.date] = r.rating; });
       setRatings(data);
@@ -205,10 +208,13 @@ function App() {
     }
   };
 
+  // ИСПРАВЛЕНА функция fetchUserRatings
   const fetchUserRatings = async () => {
     if (!viewingUser) return;
     try {
-      const res = await API.get(`/users/${viewingUser.id}/ratings/${currentYear}/${currentMonth + 1}`);
+      const monthNum = currentMonth + 1;
+      const monthStr = monthNum.toString().padStart(2, '0');
+      const res = await API.get(`/users/${viewingUser.id}/ratings/${currentYear}/${monthStr}`);
       const data = {};
       res.data.forEach(r => { data[r.date] = r.rating; });
       setRatings(data);
@@ -864,7 +870,6 @@ const styles = {
   infoText: { fontSize: '11px', color: '#555' },
   infoTextSmall: { fontSize: '10px', color: '#444', marginTop: '4px' },
   
-  // Стили для списка пользователей
   userListModal: { background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '16px', width: '90%', maxWidth: '400px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   userListHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderBottom: '1px solid #1a1a1a' },
   userListTitle: { fontSize: '16px', fontWeight: 600, margin: 0, color: '#e0e0e0' },
